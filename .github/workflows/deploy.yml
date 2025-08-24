@@ -1,0 +1,49 @@
+name: Deploy to Droplet
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Start ssh-agent and add key
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Ensure remote known host
+        run: |
+          # add github and droplet to known_hosts (avoid prompt)
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts || true
+          ssh-keyscan -H ${{ secrets.REMOTE_HOST }} >> ~/.ssh/known_hosts || true
+
+      - name: Deploy on remote server
+        run: |
+          ssh -o StrictHostKeyChecking=yes -p ${REMOTE_PORT:-22} ${{ secrets.REMOTE_USER }}@${{ secrets.REMOTE_HOST }} "bash -s" <<'SSH_EOF'
+            set -e
+            cd /opt || mkdir -p /opt
+            if [ ! -d /opt/project-root ]; then
+              git clone git@github.com:${GITHUB_REPOSITORY} /opt/project-root
+            fi
+            cd /opt/project-root
+            # ensure we are on main and up-to-date
+            git fetch --all
+            git reset --hard origin/main
+
+            # optionally pull images first if you use registry:
+            # docker compose pull || true
+
+            # build + start (uses .env in repo root on server)
+            docker compose --env-file .env up -d --build --remove-orphans
+            docker image prune -f --filter "until=24h" || true
+          SSH_EOF
+        env:
+          REMOTE_PORT: ${{ secrets.REMOTE_PORT }}
