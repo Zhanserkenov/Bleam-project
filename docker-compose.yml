@@ -27,8 +27,8 @@ services:
       - DB_URL=${DB_URL}
       - DB_USERNAME=${DB_USERNAME}
       - DB_PASSWORD=${DB_PASSWORD}
-      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-prod}
-      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:-"-Xms512m -Xmx1g"}
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS}
       - MAIL_HOST=${MAIL_HOST}
       - MAIL_PORT=${MAIL_PORT}
       - MAIL_USERNAME=${MAIL_USERNAME}
@@ -66,10 +66,10 @@ services:
     container_name: whatsapp-bridge
     environment:
       - REDIS_URL=${REDIS_URL}
-      - PORT=${WHATSAPP_PORT:-3000}
-      - SERVICE_NAME=${SERVICE_NAME_WHATSAPP:-whatsapp-service}
-      - JWT_SERVICE_SECRET=${JWT_SECRET_SERVICE:-MyAnotherSuperSecretKeyForServices12345}
-      - PLATFORM_SERVICE_URL=${PLATFORM_SERVICE_URL_WHATSAPP:-http://localhost:8080/api/platforms/whatsapp-ids}
+      - PORT=${WHATSAPP_PORT}
+      - SERVICE_NAME=${SERVICE_NAME_WHATSAPP}
+      - JWT_SERVICE_SECRET=${JWT_SECRET_SERVICE}
+      - PLATFORM_SERVICE_URL=${PLATFORM_SERVICE_URL_WHATSAPP}
     ports:
       - "${WHATSAPP_PORT:-3000}:3000"
     volumes:
@@ -89,13 +89,13 @@ services:
     container_name: telegram-bridge
     environment:
       - REDIS_URL=${REDIS_URL}
-      - PORT=${TELEGRAM_PORT:-3001}
-      - SERVICE_NAME=${SERVICE_NAME_TELEGRAM:-telegram-service}
-      - JWT_SERVICE_SECRET=${JWT_SECRET_SERVICE:-MyAnotherSuperSecretKeyForServices12345}
-      - PLATFORM_SERVICE_URL=${PLATFORM_SERVICE_URL_TELEGRAM:-http://localhost:8080/api/platforms/telegram-ids}
-      - TG_WEBHOOK_SECRET_SALT=${TG_WEBHOOK_SECRET_SALT:-ec7f3b9f4aa94c9285d473df82b49c9e6b5f5f6c1a99eac0e7c4d2f913c88b7f}
+      - PORT=${TELEGRAM_PORT}
+      - SERVICE_NAME=${SERVICE_NAME_TELEGRAM}
+      - JWT_SERVICE_SECRET=${JWT_SECRET_SERVICE}
+      - PLATFORM_SERVICE_URL=${PLATFORM_SERVICE_URL_TELEGRAM}
+      - TG_WEBHOOK_SECRET_SALT=${TG_WEBHOOK_SECRET_SALT}
     ports:
-      - "${TELEGRAM_PORT:-3001}:3000"
+      - "${TELEGRAM_PORT:-3001}:3001"
     depends_on:
       - redis
       - bleam
