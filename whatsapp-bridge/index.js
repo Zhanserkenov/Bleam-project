@@ -1,30 +1,25 @@
 require('dotenv').config();
 
 const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const { Kafka } = require('kafkajs');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const { createClient } = require('redis');
 
 const app = express();
 app.use(express.json());
 
-const APP_PORT = process.env.PORT;
-
+const APP_PORT = process.env.PORT || 3000;
 const SERVICE_NAME = process.env.SERVICE_NAME;
 const SERVICE_SECRET = process.env.JWT_SERVICE_SECRET;
-
 const PLATFORM_SERVICE_URL = process.env.PLATFORM_SERVICE_URL;
 
-const KAFKA_BROKERS = (process.env.KAFKA_BROKERS).split(',');
-const KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID;
-const KAFKA_CONSUMER_GROUP = process.env.KAFKA_CONSUMER_GROUP;
+// Redis URL
+const REDIS_URL = process.env.REDIS_URL;
 
-const kafka = new Kafka({ clientId: KAFKA_CLIENT_ID, brokers: KAFKA_BROKERS });
-const producer = kafka.producer();
-const consumer = kafka.consumer({ groupId: KAFKA_CONSUMER_GROUP });
+const redis = createClient({ url: REDIS_URL });
 
 const sockets = new Map();
 const manualStops = new Set();
@@ -70,18 +65,21 @@ async function startSocket(userId) {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr && !manualStops.has(userId)) {
-            await producer.send({
-                topic: 'whatsapp_qr',
-                messages: [{ key: userId.toString(), value: JSON.stringify({ userId, qrCode: qr }) }]
-            });
+            // publish to Redis stream whatsapp_qr
+            try {
+                await redis.sendCommand(['XADD', 'whatsapp_qr', '*', 'userId', String(userId), 'qrCode', qr]);
+            } catch (e) {
+                console.error('Failed to publish qr to redis', e);
+            }
         }
 
         if (connection === 'open') {
             sockets.get(userId).attempts = 0;
-            await producer.send({
-                topic: 'whatsapp.status',
-                messages: [{ key: userId.toString(), value: JSON.stringify({ userId, status: 'CONNECTED' }) }]
-            });
+            try {
+                await redis.sendCommand(['XADD', 'whatsapp.status', '*', 'userId', String(userId), 'status', 'CONNECTED']);
+            } catch (e) {
+                console.error('Failed to publish status CONNECTED', e);
+            }
             console.log(`User ${userId} connected to WhatsApp`);
         }
 
@@ -99,24 +97,30 @@ async function startSocket(userId) {
 
             if (attempts < 3) {
                 console.log(`Reconnecting user ${userId}…`);
-                await startSocket(userId);
+                // wait a bit before reconnecting to avoid tight loop
+                setTimeout(() => startSocket(userId), 1000 * 2);
             } else {
                 console.log(`Max reconnects reached for user ${userId}, deactivating.`);
                 await cleanup(userId);
-                await producer.send({
-                    topic: 'whatsapp.status',
-                    messages: [{ key: userId.toString(), value: JSON.stringify({ userId, status: 'DISCONNECTED' }) }]
-                });
+                try {
+                    await redis.sendCommand(['XADD', 'whatsapp.status', '*', 'userId', String(userId), 'status', 'DISCONNECTED']);
+                } catch (e) {
+                    console.error('Failed to publish status DISCONNECTED', e);
+                }
             }
         }
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        const chatUserId = msg.key.remoteJid.split('@')[0];
-        await sendToSpring(chatUserId, text, userId);
+        try {
+            const msg = m.messages[0];
+            if (!msg.message || msg.key.fromMe) return;
+            const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+            const chatUserId = msg.key.remoteJid.split('@')[0];
+            await sendToSpring(chatUserId, text, userId);
+        } catch (e) {
+            console.error('Error handling messages.upsert', e);
+        }
     });
 }
 
@@ -126,25 +130,100 @@ async function cleanup(userId) {
         fs.rmSync(sessionFolder, { recursive: true, force: true });
         console.log(`Deleted session folder for user ${userId}`);
     }
+    const record = sockets.get(userId);
+    if (record?.sock) {
+        try { await record.sock.logout(); } catch(e){/*ignore*/ }
+    }
     sockets.delete(userId);
     manualStops.delete(userId);
 }
 
 async function sendToSpring(chatUserId, messageText, userId) {
-    await producer.send({ topic: 'whatsapp.incoming', messages: [{ key: chatUserId, value: JSON.stringify({ chatUserId, message: messageText, userId }) }] });
+    // publish into whatsapp.incoming stream
+    try {
+        await redis.sendCommand(['XADD', 'whatsapp.incoming', '*',
+            'chatUserId', chatUserId,
+            'message', messageText,
+            'userId', String(userId)
+        ]);
+    } catch (e) {
+        console.error('Failed to publish incoming message to redis', e);
+    }
 }
 
-async function startConsumer() {
-    await consumer.connect();
-    await consumer.subscribe({ topic: 'whatsapp.outgoing' });
-    await consumer.run({
-        eachMessage: async ({ message }) => {
-            const { chatUserId, message: text, userId } = JSON.parse(message.value.toString());
-            const record = sockets.get(userId);
-            if (!record?.sock) return console.error(`No socket for user ${userId}`);
-            await record.sock.sendMessage(`${chatUserId}@s.whatsapp.net`, { text });
+async function startOutgoingConsumerLoop() {
+    // This consumer reads from stream `whatsapp.outgoing` using a consumer group,
+    // acknowledges processed messages, and sends them to WhatsApp sockets.
+    const STREAM = 'whatsapp.outgoing';
+    const GROUP = 'whatsapp-bridge-group';
+    const consumerName = `consumer-${process.pid}-${Math.floor(Math.random()*1000)}`;
+
+    // create group if not exists
+    try {
+        await redis.sendCommand(['XGROUP', 'CREATE', STREAM, GROUP, '$', 'MKSTREAM']);
+        console.log('Created consumer group', GROUP, 'for stream', STREAM);
+    } catch (err) {
+        // group may already exist -> ignore "BUSYGROUP" message
+        if (!(err && String(err).includes('BUSYGROUP'))) {
+            console.error('Failed to create group', err);
+            // but continue
         }
-    });
+    }
+
+    while (true) {
+        try {
+            // XREADGROUP GROUP <group> <consumer> BLOCK 2000 COUNT 10 STREAMS <stream> >
+            const reply = await redis.sendCommand([
+                'XREADGROUP', 'GROUP', GROUP, consumerName,
+                'BLOCK', '2000',
+                'COUNT', '10',
+                'STREAMS', STREAM, '>'
+            ]);
+
+            if (!reply) {
+                // nothing read within block
+                continue;
+            }
+
+            // reply format: [ [ stream, [ [ id, [ field, val, field, val ... ] ], ... ] ] ]
+            for (const streamData of reply) {
+                const streamName = streamData[0]; // should be 'whatsapp.outgoing'
+                const entries = streamData[1];
+                for (const entry of entries) {
+                    const id = entry[0];
+                    const arr = entry[1]; // flat array [field, val, field, val...]
+                    const obj = {};
+                    for (let i = 0; i < arr.length; i += 2) {
+                        obj[String(arr[i])] = String(arr[i + 1]);
+                    }
+
+                    try {
+                        const chatUserId = obj.chatUserId;
+                        const text = obj.message;
+                        const userId = obj.userId;
+                        const record = sockets.get(Number(userId));
+                        if (!record?.sock) {
+                            console.error(`No socket for user ${userId} (outgoing id=${id})`);
+                        } else {
+                            // send via baileys
+                            await record.sock.sendMessage(`${chatUserId}@s.whatsapp.net`, { text });
+                        }
+
+                        // acknowledge
+                        await redis.sendCommand(['XACK', STREAM, GROUP, id]);
+
+                    } catch (procErr) {
+                        console.error('Error processing outgoing stream entry', procErr);
+                        // do not ack -> stays pending for reprocessing
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Error in outgoing consumer loop', err);
+            // on error, sleep a bit to avoid tight loop
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
 }
 
 async function fetchActiveUsers() {
@@ -160,7 +239,11 @@ async function fetchActiveUsers() {
 async function startAllUsers() {
     const userIds = await fetchActiveUsers();
     for (const userId of userIds) {
-        await startSocket(userId);
+        try {
+            await startSocket(userId);
+        } catch (e) {
+            console.error('Failed to start socket for user', userId, e);
+        }
     }
 }
 
@@ -180,7 +263,9 @@ app.post('/stop-platform', verifyServiceToken, async (req, res) => {
     manualStops.add(userId);
     const { sock } = sockets.get(userId) || {};
     if (sock) {
-        await sock.logout();
+        try {
+            await sock.logout();
+        } catch (e) { /* ignore */ }
         res.send({ message: 'Platform stopped' });
     } else {
         res.status(404).send({ error: 'Not found' });
@@ -189,8 +274,13 @@ app.post('/stop-platform', verifyServiceToken, async (req, res) => {
 
 (async () => {
     try {
-        await producer.connect();
-        await startConsumer();
+        await redis.connect();
+        console.log('Connected to Redis', REDIS_URL);
+
+        // start outgoing consumer loop
+        startOutgoingConsumerLoop().catch(err => console.error('Outgoing loop crashed', err));
+
+        // start existing sessions
         await startAllUsers();
 
         app.listen(APP_PORT, '0.0.0.0', () =>

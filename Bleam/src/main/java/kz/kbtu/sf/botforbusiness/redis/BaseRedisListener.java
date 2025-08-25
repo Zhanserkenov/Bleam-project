@@ -1,10 +1,9 @@
-package kz.kbtu.sf.botforbusiness.kafka;
+package kz.kbtu.sf.botforbusiness.redis;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import kz.kbtu.sf.botforbusiness.model.*;
-import kz.kbtu.sf.botforbusiness.repository.BotKnowledgeRepository;
 import kz.kbtu.sf.botforbusiness.repository.UserRepository;
 import kz.kbtu.sf.botforbusiness.service.*;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +16,7 @@ import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Slf4j
-public abstract class BaseKafkaListener {
+public abstract class BaseRedisListener {
 
     private final BotKnowledgeService botKnowledgeService;
     private final SessionService sessionService;
@@ -30,7 +29,7 @@ public abstract class BaseKafkaListener {
     private final Map<String, List<String>> buffer = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> tasks = new ConcurrentHashMap<>();
 
-    protected BaseKafkaListener(BotKnowledgeService botKnowledgeService, SessionService sessionService, MessageService messageService, GeminiService geminiService, GPTService gptService, UserRepository userRepository) {
+    protected BaseRedisListener(BotKnowledgeService botKnowledgeService, SessionService sessionService, MessageService messageService, GeminiService geminiService, GPTService gptService, UserRepository userRepository) {
         this.botKnowledgeService = botKnowledgeService;
         this.sessionService = sessionService;
         this.messageService = messageService;
@@ -39,7 +38,7 @@ public abstract class BaseKafkaListener {
         this.userRepository = userRepository;
     }
 
-    protected void handleMessage(String messageJson, PlatformType platform, KafkaResponseSender sender) {
+    protected void handleMessage(String messageJson, PlatformType platform, RedisResponseSender sender) {
         try {
             ObjectMapper mapper = new ObjectMapper();
             JsonNode json = mapper.readTree(messageJson);
@@ -68,7 +67,7 @@ public abstract class BaseKafkaListener {
         }
     }
 
-    private void sendAggregatedReply(String key, PlatformType platform, KafkaResponseSender sender, Long userId, String chatUserId) {
+    private void sendAggregatedReply(String key, PlatformType platform, RedisResponseSender sender, Long userId, String chatUserId) {
         try {
             List<String> msgs = buffer.remove(key);
             tasks.remove(key);
@@ -126,7 +125,7 @@ public abstract class BaseKafkaListener {
     }
 
     @FunctionalInterface
-    public interface KafkaResponseSender {
+    public interface RedisResponseSender {
         void send(String chatUserId, String message, Long userId);
     }
 }
