@@ -20,6 +20,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -136,5 +137,11 @@ public class TelegramService implements PlatformService {
     @Override
     public List<Session> getAllSessions(Long userId) {
         return sessionRepository.findByOwnerIdAndPlatformType(userId, PlatformType.TELEGRAM);
+    }
+
+    @Override
+    public Optional<PlatformStatus> getPlatformStatus(Long userId) {
+        return telegramRepository.findByOwnerId(userId)
+                .map(TelegramPlatform::getPlatformStatus);
     }
 }

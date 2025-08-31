@@ -50,4 +50,9 @@ public class BotPlatformService {
             userRepository.save(user);
         }
     }
+
+    public AiModelType getAiModelType(Long userId) {
+        User user = userRepository.findById(userId).orElseThrow(() -> new EntityNotFoundException("User not found"));
+        return user.getAiModel();
+    }
 }

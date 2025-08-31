@@ -4,13 +4,10 @@ import jakarta.persistence.EntityNotFoundException;
 import kz.kbtu.sf.botforbusiness.dto.PlatformDTO;
 import kz.kbtu.sf.botforbusiness.dto.PlatformRequest;
 import kz.kbtu.sf.botforbusiness.exception.PlatformOperationException;
-import kz.kbtu.sf.botforbusiness.model.PlatformStatus;
-import kz.kbtu.sf.botforbusiness.model.PlatformType;
-import kz.kbtu.sf.botforbusiness.model.Session;
+import kz.kbtu.sf.botforbusiness.model.*;
 import kz.kbtu.sf.botforbusiness.repository.SessionRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
-import kz.kbtu.sf.botforbusiness.model.WhatsAppPlatform;
 import kz.kbtu.sf.botforbusiness.repository.WhatsAppRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,6 +16,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -119,5 +117,11 @@ public class WhatsAppService implements PlatformService {
     @Override
     public List<Session> getAllSessions(Long userId) {
         return sessionRepository.findByOwnerIdAndPlatformType(userId, PlatformType.WHATSAPP);
+    }
+
+    @Override
+    public Optional<PlatformStatus> getPlatformStatus(Long userId) {
+        return whatsAppRepository.findByOwnerId(userId)
+                .map(WhatsAppPlatform::getPlatformStatus);
     }
 }

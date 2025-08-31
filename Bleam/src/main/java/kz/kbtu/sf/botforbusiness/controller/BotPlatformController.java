@@ -1,13 +1,9 @@
 package kz.kbtu.sf.botforbusiness.controller;
 
 import kz.kbtu.sf.botforbusiness.dto.PlatformRequest;
-import kz.kbtu.sf.botforbusiness.model.AiModelType;
-import kz.kbtu.sf.botforbusiness.model.PlatformType;
-import kz.kbtu.sf.botforbusiness.model.TelegramPlatform;
-import kz.kbtu.sf.botforbusiness.model.WhatsAppPlatform;
+import kz.kbtu.sf.botforbusiness.model.*;
 import kz.kbtu.sf.botforbusiness.service.BotPlatformService;
 import kz.kbtu.sf.botforbusiness.service.PlatformServiceFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -49,6 +45,20 @@ public class BotPlatformController {
         Long userId = getCurrentUserId();
         botPlatformService.selectAiModel(userId, aiModelType);
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/aiModelType")
+    public AiModelType getAiModelType() {
+        Long userId = getCurrentUserId();
+        return botPlatformService.getAiModelType(userId);
+    }
+
+    @GetMapping("/{platformType}/status")
+    public PlatformStatus getPlatformStatus(@PathVariable PlatformType platformType) {
+        Long userId = getCurrentUserId();
+        return platformServiceFactory.getService(platformType)
+                .getPlatformStatus(userId)
+                .orElse(null);
     }
 
     @GetMapping("/whatsapp-ids")
