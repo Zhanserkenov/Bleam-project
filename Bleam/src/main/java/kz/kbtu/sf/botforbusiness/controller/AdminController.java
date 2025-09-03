@@ -1,13 +1,14 @@
 package kz.kbtu.sf.botforbusiness.controller;
 
+import kz.kbtu.sf.botforbusiness.dto.UserInfo;
 import kz.kbtu.sf.botforbusiness.service.AdminService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
+@PreAuthorize("hasRole('ADMIN')")
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
@@ -18,10 +19,14 @@ public class AdminController {
         this.adminService = adminService;
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
-    @PostMapping("/approve/{userId}")
+    @GetMapping
+    public List<UserInfo> getAllUsers() {
+        return adminService.getAllUsers();
+    }
+
+    @PostMapping("/changeRole/{userId}")
     public ResponseEntity<String> approveUser(@PathVariable Long userId) {
-        adminService.approveUser(userId);
-        return ResponseEntity.ok("User approved");
+        String newRole = adminService.changeRole(userId);
+        return ResponseEntity.ok("Role changed to " + newRole);
     }
 }
