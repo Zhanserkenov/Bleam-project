@@ -55,7 +55,7 @@ public abstract class BaseRedisListener {
                 prev.cancel(false);
             }
 
-            int delay = 20 + new Random().nextInt(11);
+            int delay = 1 + new Random().nextInt(11);
             ScheduledFuture<?> future = scheduler.schedule(() -> {
                 sendAggregatedReply(key, platform, sender, userId, chatUserId);
             }, delay, TimeUnit.SECONDS);
